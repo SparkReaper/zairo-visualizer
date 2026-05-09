@@ -1,0 +1,38 @@
+# Virtual environment
+.venv/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+
+# Large binary files
+*.wav
+*.mp3
+*.zip
+*.mp4
+*.mov
+*.avi
+
+# Pytest
+.pytest_cache/
+
+# Byte-compiled
+__pycache__/
+*.pyc
+
+# Directories not needed for the visualizer deploy
+zairo_engine/
+edit_engine/
+Video Clips/
+KDENLive - Zairo Plugin/
+The Early Builds pre Zairo/
+Last Stable build Zairo 0.6.0/
+Zairo_0.5.5_engine/
+Test-working ping/
+com.ajmedia.zairo FALSE/
+lofi-*/
+rhythm-rally-*/
+background-*/
+easy-sunday-vibes-*/
