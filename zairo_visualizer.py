@@ -134,11 +134,14 @@ st.subheader(f"Test {selected_idx+1} — {selected.get('style')} / {selected.get
 # ====================== WAVEFORM VISUALISATION ======================
 st.subheader("📈 Waveform + Cuts")
 
-filter_col1, filter_col2 = st.columns(2)
-with filter_col1:
+filter_row1 = st.columns(2)
+with filter_row1[0]:
     crop_to_window = st.checkbox("Crop to analysis window", value=True)
-with filter_col2:
+with filter_row1[1]:
     show_rejected = st.checkbox("Show rejected candidates", value=False)
+
+layer_options = ["Primary", "Swing", "Ghost", "Guide"]
+active_layers = st.multiselect("Visible layers", layer_options, default=layer_options)
 
 report = get_report(selected)
 cuts = report.get("final_cuts_detailed", [])
@@ -171,17 +174,31 @@ fig.add_trace(go.Scatter(
     opacity=0.7
 ))
 
-# Engine cuts
+# Engine cuts — filtered by active layers
 for c in cuts:
+    is_ghost = c.get("swing_reason") == "ghost_note"
+    is_primary = c.get("wave") == "primary" and not is_ghost
+    is_swing = c.get("wave") == "secondary" and not is_ghost
+
+    if is_primary and "Primary" not in active_layers:
+        continue
+    if is_swing and "Swing" not in active_layers:
+        continue
+    if is_ghost and "Ghost" not in active_layers:
+        continue
+
     t_local = c.get("local_time_seconds") or c.get("time", 0)
     t_abs = t_local + win_start
     t = t_abs if (audio_down is not None or not crop_to_window) else t_local
     if crop_to_window and (t < win_start or t > win_end):
         continue
     score = c.get("score", 0)
-    color = "#2ca02c" if c.get("wave") == "primary" else "#ff7f0e"
-    if c.get("swing_reason") == "ghost_note":
+    if is_primary:
+        color = "#2ca02c"
+    elif is_ghost:
         color = "#d62728"
+    else:
+        color = "#ff7f0e"
     fig.add_vline(
         x=t, line_dash="dash", line_color=color, line_width=2,
         annotation_text=f"{score:.2f}", annotation_position="top"
@@ -201,13 +218,14 @@ if show_rejected:
         )
 
 # Guide cuts
-for t in guide_cuts:
-    if crop_to_window and (t < win_start or t > win_end):
-        continue
-    fig.add_vline(
-        x=t, line_dash="dot", line_color="#9467bd", line_width=1.5,
-        annotation_text="G", annotation_position="bottom"
-    )
+if "Guide" in active_layers:
+    for t in guide_cuts:
+        if crop_to_window and (t < win_start or t > win_end):
+            continue
+        fig.add_vline(
+            x=t, line_dash="dot", line_color="#9467bd", line_width=1.5,
+            annotation_text="G", annotation_position="bottom"
+        )
 
 # Analysis window markers (when not cropped)
 if not crop_to_window and win_end > win_start:
