@@ -215,7 +215,7 @@ if not crop_to_window and win_end > win_start:
                   annotation_text="Analysis Window", annotation_position="top left")
 
 fig.update_layout(
-    title="Waveform + Engine Cuts (dashed) vs Guide (dotted)",
+    title="Waveform — Green: primary | Orange: swing | Red: ghost | Purple: guide TXT",
     xaxis_title="Time (seconds)",
     yaxis_title="Amplitude",
     height=500,
