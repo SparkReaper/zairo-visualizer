@@ -5,7 +5,6 @@ import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
 import soundfile as sf
-import librosa
 from datetime import datetime
 
 st.set_page_config(page_title="Zairo Analysis Visualizer", layout="wide")
@@ -88,22 +87,26 @@ st.subheader(f"Test {selected_idx+1} — {selected.get('style')} / {selected.get
 # ====================== WAVEFORM VISUALISATION ======================
 st.subheader("📈 Waveform + Cuts")
 
-# Load audio if provided
-if wav_file:
-    audio, sr = sf.read(wav_file)
-else:
-    st.warning("No WAV loaded — waveform will be placeholder. Upload the original file for accurate view.")
-    audio = np.zeros(44100 * 40)  # dummy
-    sr = 44100
+try:
+    if wav_file:
+        audio, sr = sf.read(wav_file)
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+    else:
+        st.warning("No WAV loaded — waveform will be placeholder.")
+        audio = np.zeros(44100 * 40)
+        sr = 44100
 
-# Downsample for plotting
-target_sr = 4410  # 10x downsample for smooth plotting
-if len(audio) > 0:
-    audio_down = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
-else:
+    # Simple decimation instead of librosa.resample (much less memory)
+    step = max(1, sr // 4410)
+    audio_down = audio[::step]
+    target_sr = sr / step
+    times = np.linspace(0, len(audio_down) / target_sr, len(audio_down))
+except Exception as e:
+    st.warning(f"Could not load WAV: {e} — using placeholder waveform.")
     audio_down = np.zeros(1000)
-
-times = np.linspace(0, len(audio_down)/target_sr, len(audio_down))
+    target_sr = 4410
+    times = np.linspace(0, len(audio_down) / target_sr, len(audio_down))
 
 # Extract cuts
 cuts = selected.get("report", {}).get("final_cuts_detailed", []) if "report" in selected else selected.get("final_cuts_detailed", [])
