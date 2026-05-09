@@ -59,6 +59,10 @@ if not report_files:
     st.info("👉 Upload at least one `zairo_testreport_*.json` file to begin")
     st.stop()
 
+if not st.sidebar.button("Visualize", type="primary", use_container_width=True):
+    st.info("Upload your files above, then press **Visualize** when ready.")
+    st.stop()
+
 # Load reports
 reports = []
 for f in report_files:
