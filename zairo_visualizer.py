@@ -11,115 +11,156 @@ st.set_page_config(page_title="Zairo Analysis Visualizer", layout="wide")
 st.title("🧪 Zairo Analysis Visualizer")
 st.caption("Load TestReport JSONs + Guide TXT → visual comparison of cuts & swing behaviour")
 
-# ====================== FILE LOADING ======================
-@st.cache_data
-def load_test_report(uploaded_file):
-    """Handle both Streamlit UploadedFile and real file paths."""
-    if uploaded_file is None:
-        return None
-    # Streamlit UploadedFile case
-    if hasattr(uploaded_file, "getvalue"):
-        content = uploaded_file.getvalue().decode("utf-8")
+# ====================== HELPERS ======================
+def parse_reports(uploaded_files):
+    reports = []
+    for f in uploaded_files:
+        content = f.getvalue().decode("utf-8")
         data = json.loads(content)
-    else:
-        # Fallback for normal file path
-        with open(uploaded_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-    # Handle the wrapper format you have (with "tests" key)
-    if isinstance(data, dict) and "tests" in data:
-        return data["tests"]
-    return [data] if isinstance(data, dict) else data
+        if isinstance(data, dict) and "tests" in data:
+            reports.extend(data["tests"])
+        elif isinstance(data, dict):
+            reports.append(data)
+        elif isinstance(data, list):
+            reports.extend(data)
+    return reports
 
 
-@st.cache_data
-def load_guide_txt(uploaded_file):
-    """Handle both Streamlit UploadedFile and real file paths."""
+def parse_guide(uploaded_file):
     if uploaded_file is None:
-        return ""
-    if hasattr(uploaded_file, "getvalue"):
-        return uploaded_file.getvalue().decode("utf-8")
-    else:
-        with open(uploaded_file, "r", encoding="utf-8") as f:
-            return f.read()
+        return []
+    text = uploaded_file.getvalue().decode("utf-8")
+    cuts = []
+    for line in text.splitlines():
+        if line.strip() and line[0].isdigit():
+            try:
+                t = float(line.split("s")[0].strip())
+                cuts.append(t)
+            except Exception:
+                pass
+    return cuts
 
-# Sidebar — file selection
+
+def load_audio(uploaded_file):
+    if uploaded_file is None:
+        return None, None
+    audio, sr = sf.read(uploaded_file)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    return audio, sr
+
+
+def get_report(test):
+    return test.get("report", test)
+
+
+def get_window(test):
+    report = get_report(test)
+    meta = report.get("input_metadata", {})
+    start = meta.get("start_sec", 0.0)
+    end = meta.get("end_sec", None)
+    if end is None:
+        end = test.get("duration_sec", 0)
+        if end == 0:
+            cuts = report.get("final_cuts_detailed", [])
+            if cuts:
+                end = max(c.get("local_time_seconds", 0) for c in cuts) + 1.0
+    return start, end
+
+# ====================== SIDEBAR — FILE LOADING ======================
 st.sidebar.header("📂 Load Data")
 report_files = st.sidebar.file_uploader(
-    "Select one or more TestReport JSON files", 
-    type=["json"], 
+    "Select one or more TestReport JSON files",
+    type=["json"],
     accept_multiple_files=True
 )
-
 guide_file = st.sidebar.file_uploader("Select corresponding Guide TXT (optional)", type=["txt"])
-
 wav_file = st.sidebar.file_uploader("Optional: Original WAV for accurate waveform", type=["wav"])
 
 if not report_files:
     st.info("👉 Upload at least one `zairo_testreport_*.json` file to begin")
     st.stop()
 
-if not st.sidebar.button("Visualize", type="primary", use_container_width=True):
+# Visualize button — load once, store in session state
+if st.sidebar.button("Visualize", type="primary", use_container_width=True):
+    with st.spinner("Loading files..."):
+        st.session_state["reports"] = parse_reports(report_files)
+        st.session_state["guide_cuts"] = parse_guide(guide_file)
+        audio, sr = load_audio(wav_file)
+        if audio is not None:
+            step = max(1, sr // 4410)
+            st.session_state["audio_down"] = audio[::step]
+            st.session_state["audio_sr"] = sr / step
+        else:
+            st.session_state["audio_down"] = None
+            st.session_state["audio_sr"] = None
+
+if "reports" not in st.session_state:
     st.info("Upload your files above, then press **Visualize** when ready.")
     st.stop()
 
-# Load reports
-reports = []
-for f in report_files:
-    tests = load_test_report(f)
-    if tests:
-        reports.extend(tests)
+reports = st.session_state["reports"]
+guide_cuts = st.session_state["guide_cuts"]
+audio_down = st.session_state["audio_down"]
+audio_sr = st.session_state["audio_sr"]
 
 st.sidebar.success(f"Loaded {len(reports)} test reports")
 
-# Test selector
-test_options = [f"Test {i+1} — {r.get('style','?')} / swing:{r.get('swing_level','?')}" for i, r in enumerate(reports)]
-selected_idx = st.selectbox("Select test to visualise", range(len(reports)), format_func=lambda i: test_options[i])
+# ====================== TEST SELECTOR ======================
+test_options = [
+    f"Test {i+1} — {r.get('style','?')} / swing:{r.get('swing_level','?')}"
+    for i, r in enumerate(reports)
+]
+selected_idx = st.selectbox(
+    "Select test to visualise", range(len(reports)),
+    format_func=lambda i: test_options[i]
+)
 selected = reports[selected_idx]
 
 # ====================== METADATA HEADER ======================
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
+win_start, win_end = get_window(selected)
 with col1:
     st.metric("Style", selected.get("style", "hybrid"))
 with col2:
     st.metric("Swing Level", selected.get("swing_level", "off"))
 with col3:
     st.metric("Window Duration", f"{selected.get('duration_sec', 0):.2f}s")
+with col4:
+    st.metric("Window", f"{win_start:.1f}s → {win_end:.1f}s")
 
 st.subheader(f"Test {selected_idx+1} — {selected.get('style')} / {selected.get('swing_level')}")
 
 # ====================== WAVEFORM VISUALISATION ======================
 st.subheader("📈 Waveform + Cuts")
 
-try:
-    if wav_file:
-        audio, sr = sf.read(wav_file)
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
+crop_to_window = st.checkbox("Crop to analysis window", value=True)
+
+report = get_report(selected)
+cuts = report.get("final_cuts_detailed", [])
+
+# Build waveform trace
+if audio_down is not None and audio_sr:
+    full_times = np.linspace(0, len(audio_down) / audio_sr, len(audio_down))
+
+    if crop_to_window and win_end > win_start:
+        mask = (full_times >= win_start) & (full_times <= win_end)
+        plot_times = full_times[mask]
+        plot_audio = audio_down[mask]
     else:
-        st.warning("No WAV loaded — waveform will be placeholder.")
-        audio = np.zeros(44100 * 40)
-        sr = 44100
-
-    # Simple decimation instead of librosa.resample (much less memory)
-    step = max(1, sr // 4410)
-    audio_down = audio[::step]
-    target_sr = sr / step
-    times = np.linspace(0, len(audio_down) / target_sr, len(audio_down))
-except Exception as e:
-    st.warning(f"Could not load WAV: {e} — using placeholder waveform.")
-    audio_down = np.zeros(1000)
-    target_sr = 4410
-    times = np.linspace(0, len(audio_down) / target_sr, len(audio_down))
-
-# Extract cuts
-cuts = selected.get("report", {}).get("final_cuts_detailed", []) if "report" in selected else selected.get("final_cuts_detailed", [])
+        plot_times = full_times
+        plot_audio = audio_down
+else:
+    duration = win_end - win_start if crop_to_window else selected.get("duration_sec", 30)
+    plot_times = np.linspace(win_start if crop_to_window else 0, win_start + duration, 1000)
+    plot_audio = np.zeros(1000)
+    if audio_down is None:
+        st.warning("No WAV loaded — waveform is a placeholder.")
 
 fig = go.Figure()
 
-# Waveform
 fig.add_trace(go.Scatter(
-    x=times, y=audio_down,
+    x=plot_times, y=plot_audio,
     mode='lines', name='Waveform',
     line=dict(color='#1f77b4', width=1),
     opacity=0.7
@@ -127,30 +168,36 @@ fig.add_trace(go.Scatter(
 
 # Engine cuts
 for c in cuts:
-    t = c.get("local_time_seconds") or c.get("time", 0)
+    t_local = c.get("local_time_seconds") or c.get("time", 0)
+    t_abs = t_local + win_start
+    t = t_abs if (audio_down is not None or not crop_to_window) else t_local
+    if crop_to_window and (t < win_start or t > win_end):
+        continue
     score = c.get("score", 0)
     color = "#2ca02c" if c.get("wave") == "primary" else "#ff7f0e"
     if c.get("swing_reason") == "ghost_note":
         color = "#d62728"
-    fig.add_vline(x=t, line_dash="dash", line_color=color, line_width=2, annotation_text=f"{score:.2f}", annotation_position="top")
+    fig.add_vline(
+        x=t, line_dash="dash", line_color=color, line_width=2,
+        annotation_text=f"{score:.2f}", annotation_position="top"
+    )
 
-# Guide cuts (if loaded)
-if guide_file:
-    guide_text = load_guide_txt(guide_file)
-    # Very simple parser for your guide format
-    guide_cuts = []
-    for line in guide_text.splitlines():
-        if line.strip() and line[0].isdigit():
-            try:
-                t = float(line.split("s")[0].strip())
-                guide_cuts.append(t)
-            except:
-                pass
-    for t in guide_cuts:
-        fig.add_vline(x=t, line_dash="dot", line_color="#9467bd", line_width=1.5, annotation_text="G", annotation_position="bottom")
+# Guide cuts
+for t in guide_cuts:
+    if crop_to_window and (t < win_start or t > win_end):
+        continue
+    fig.add_vline(
+        x=t, line_dash="dot", line_color="#9467bd", line_width=1.5,
+        annotation_text="G", annotation_position="bottom"
+    )
+
+# Analysis window markers (when not cropped)
+if not crop_to_window and win_end > win_start:
+    fig.add_vrect(x0=win_start, x1=win_end, fillcolor="#2ca02c", opacity=0.08,
+                  annotation_text="Analysis Window", annotation_position="top left")
 
 fig.update_layout(
-    title="Waveform + Engine Cuts (solid) vs Guide (dotted)",
+    title="Waveform + Engine Cuts (dashed) vs Guide (dotted)",
     xaxis_title="Time (seconds)",
     yaxis_title="Amplitude",
     height=500,
@@ -178,11 +225,10 @@ df = pd.DataFrame([
 st.dataframe(df, use_container_width=True)
 
 # Rejection summary
-if "report" in selected and "rejection_summary" in selected["report"]:
+if "rejection_summary" in report:
     st.subheader("🚫 Top Rejected Candidates")
-    rej = pd.DataFrame(selected["report"]["rejection_summary"])
+    rej = pd.DataFrame(report["rejection_summary"])
     st.dataframe(rej, use_container_width=True)
 
-st.success("✅ Visualizer ready. Upload more JSONs or change the test selector to compare swing levels visually.")
-
+st.success("✅ Switch tests freely above — no reload needed.")
 st.caption("Built as part of the Zairo robust engine project — no shortcuts.")
