@@ -138,12 +138,11 @@ filter_col1, filter_col2 = st.columns(2)
 with filter_col1:
     crop_to_window = st.checkbox("Crop to analysis window", value=True)
 with filter_col2:
-    primary_only = st.checkbox("Primary cuts only", value=False)
+    show_rejected = st.checkbox("Show rejected candidates", value=False)
 
 report = get_report(selected)
 cuts = report.get("final_cuts_detailed", [])
-if primary_only:
-    cuts = [c for c in cuts if c.get("wave") == "primary"]
+rejected = report.get("rejection_summary", [])
 
 # Build waveform trace
 if audio_down is not None and audio_sr:
@@ -187,6 +186,19 @@ for c in cuts:
         x=t, line_dash="dash", line_color=color, line_width=2,
         annotation_text=f"{score:.2f}", annotation_position="top"
     )
+
+# Rejected candidates (dimmed, only when toggled)
+if show_rejected:
+    for r in rejected:
+        t_r = r.get("time", 0)
+        if crop_to_window and (t_r < win_start or t_r > win_end):
+            continue
+        fig.add_vline(
+            x=t_r, line_dash="dot", line_color="#555555", line_width=1,
+            annotation_text=f"✗{r.get('score', 0):.2f}",
+            annotation_position="bottom",
+            annotation_font_color="#777777",
+        )
 
 # Guide cuts
 for t in guide_cuts:
