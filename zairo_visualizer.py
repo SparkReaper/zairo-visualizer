@@ -134,10 +134,16 @@ st.subheader(f"Test {selected_idx+1} — {selected.get('style')} / {selected.get
 # ====================== WAVEFORM VISUALISATION ======================
 st.subheader("📈 Waveform + Cuts")
 
-crop_to_window = st.checkbox("Crop to analysis window", value=True)
+filter_col1, filter_col2 = st.columns(2)
+with filter_col1:
+    crop_to_window = st.checkbox("Crop to analysis window", value=True)
+with filter_col2:
+    primary_only = st.checkbox("Primary cuts only", value=False)
 
 report = get_report(selected)
 cuts = report.get("final_cuts_detailed", [])
+if primary_only:
+    cuts = [c for c in cuts if c.get("wave") == "primary"]
 
 # Build waveform trace
 if audio_down is not None and audio_sr:
